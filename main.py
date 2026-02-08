@@ -1,3 +1,4 @@
+import re
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -9,30 +10,37 @@ from telegram.ext import (
 )
 
 TOKEN = "8496410333:AAHJJK0jKMvfKZ72Y9jEC8E7u8Ns9mzau1A"
-GROUP_ID = -1001234567890  # ID группы
-INVITE_LINK = "https://t.me/+Pv7zO_QNFWs3ZDBi"  # инвайт в группу
+GROUP_ID = -1001234567890
+INVITE_LINK = "https://t.me/+Pv7zO_QNFWs3ZDBi"
 
 # временное хранилище данных пользователей
 user_data_storage = {}
 
 # ------------------ Проверка никнеймов ------------------
+NICKNAME_REGEX = re.compile(r"^[a-zA-Zа-яА-ЯёЁ]{3,14}$")
+
 def check_nicknames(nicknames: list[str]) -> bool:
-    """
-    Тут должна быть твоя реальная проверка.
-    Сейчас — просто заглушка (всегда True)
-    """
+    for nick in nicknames:
+        if not NICKNAME_REGEX.fullmatch(nick):
+            return False
     return True
 
 
-# ------------------ /start ------------------
+# ------------------ /start (только ЛС) ------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+        return
+
     await update.message.reply_text(
         "Напиши никнейм или несколько через запятую"
     )
 
 
-# ------------------ Обработка никнеймов ------------------
+# ------------------ Обработка никнеймов (ТОЛЬКО ЛС) ------------------
 async def handle_nicknames(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private":
+        return
+
     user = update.effective_user
     text = update.message.text
 
@@ -43,10 +51,15 @@ async def handle_nicknames(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not check_nicknames(nicknames):
-        await update.message.reply_text("Проверка не пройдена ❌")
+        await update.message.reply_text(
+            "❌ Ошибка\n"
+            "Каждый никнейм должен быть:\n"
+            "• от 3 до 14 букв\n"
+            "• без цифр и символов\n"
+            "• разделение — запятая"
+        )
         return
 
-    # сохраняем никнеймы пользователя
     user_data_storage[user.id] = {
         "username": user.username,
         "nicknames": nicknames
@@ -57,12 +70,55 @@ async def handle_nicknames(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ------------------ Отслеживание входа в группу ------------------
+# ------------------ Вход пользователя в группу ------------------
 async def track_user_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_member = update.chat_member
-    user = chat_member.new_chat_member.user
 
-    if user.id not in user_data_storage:
+    if chat_member.chat.id != GROUP_ID:
+        return
+
+    if chat_member.old_chat_member.status in ("left", "kicked") and \
+       chat_member.new_chat_member.status == "member":
+
+        user = chat_member.new_chat_member.user
+
+        if user.id not in user_data_storage:
+            return
+
+        data = user_data_storage[user.id]
+        nicknames_str = ", ".join(data["nicknames"])
+
+        username = f"@{user.username}" if user.username else user.full_name
+
+        await context.bot.send_message(
+            chat_id=GROUP_ID,
+            text=f"{username} добавлен, его персонажи: {nicknames_str}"
+        )
+
+        del user_data_storage[user.id]
+
+
+# ------------------ Запуск ------------------
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+            handle_nicknames
+        )
+    )
+    app.add_handler(
+        ChatMemberHandler(track_user_join, ChatMemberHandler.CHAT_MEMBER)
+    )
+
+    print("Бот запущен...")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
         return
 
     data = user_data_storage[user.id]
